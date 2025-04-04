@@ -1,11 +1,14 @@
 #include <stdio.h>
 #include "cuda_runtime.h"
 #include <curand_kernel.h>
+#include <thrust/device_vector.h>
+#include <thrust/reduce.h>
 
 #define rand_uniform ((float)rand() / RAND_MAX)
 
 float HW1_SPHERE_host(int n);
 float HW1_SPHERE_reduce1(int n);
+float HW1_SPHERE_thrust(int n);
 
 __global__ void init_curand_states(curandState *states, unsigned long seed)
 {
@@ -71,6 +74,12 @@ int main()
     fprintf(stdout, "simulated = %.15f / ", unit_sphere_volume_simulated);
     fprintf(stdout, "exact = %.15f / ", unit_sphere_volume_exact);
     fprintf(stdout, "relative error = %.15f\n", fabs(unit_sphere_volume_simulated - unit_sphere_volume_exact) / unit_sphere_volume_exact);
+
+    unit_sphere_volume_simulated = HW1_SPHERE_thrust(N);
+    fprintf(stdout, "\nHW1_SPHERE_reduce1\nArea of unit sphere: ");
+    fprintf(stdout, "simulated = %.15f / ", unit_sphere_volume_simulated);
+    fprintf(stdout, "exact = %.15f / ", unit_sphere_volume_exact);
+    fprintf(stdout, "relative error = %.15f\n", fabs(unit_sphere_volume_simulated - unit_sphere_volume_exact) / unit_sphere_volume_exact);
 }
 
 float HW1_SPHERE_host(int n)
@@ -101,13 +110,12 @@ float HW1_SPHERE_reduce1(int n)
 {
     int threads = 256;
     int blocks = n / threads; // assume N is a multiple of thread block size.
-    // unsigned int n_trials_per_thread = 1 << 16;
-    // N * n_trials_per_thread = simulation size n
 
     curandState *d_states;
     cudaMalloc(&d_states, n * sizeof(curandState));
 
     init_curand_states<<<blocks, threads>>>(d_states, time(NULL));
+    cudaDeviceSynchronize();
 
     float *d_counts;
     cudaMalloc(&d_counts, n * sizeof(double));
@@ -125,6 +133,30 @@ float HW1_SPHERE_reduce1(int n)
     float sum;
     cudaMemcpy(&sum, d_counts, sizeof(float), cudaMemcpyDeviceToHost);
 
-    float volume = 8.0 * sum / n;
-    return volume;
+    // Return the volume of the sphere
+    return 8.0 * sum / n; // The volume of the unit cube is 8
+}
+
+float HW1_SPHERE_thrust(int n)
+{
+    int threads = 256;
+    int blocks = n / threads; // assume N is a multiple of thread block size.
+
+    curandState *d_states;
+    cudaMalloc(&d_states, n * sizeof(curandState));
+
+    init_curand_states<<<blocks, threads>>>(d_states, time(NULL));
+    cudaDeviceSynchronize();
+
+    float *d_counts;
+    cudaMalloc(&d_counts, n * sizeof(double));
+
+    do_MonteCarlo_simulation<<<blocks, threads, threads * sizeof(float)>>>(d_states, d_counts, n);
+    cudaDeviceSynchronize();
+
+    thrust::device_vector<float> d_vec_counts(d_counts, d_counts + n);
+    float sum = thrust::reduce(d_vec_counts.begin(), d_vec_counts.end());
+
+    // Return the volume of the sphere
+    return 8.0 * sum / n; // The volume of the unit cube is 8
 }
