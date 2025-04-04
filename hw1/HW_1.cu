@@ -5,56 +5,15 @@
 #include <thrust/reduce.h>
 
 #define rand_uniform ((float)rand() / RAND_MAX)
+#define ceil_div(a, b) (((a) + (b) - 1) / (b))
 
 float HW1_SPHERE_host(int n);
 float HW1_SPHERE_reduce1(int n);
 float HW1_SPHERE_thrust(int n);
 
-__global__ void init_curand_states(curandState *states, unsigned long seed)
-{
-    int idx = threadIdx.x + blockIdx.x * blockDim.x;
-    // each thread gets a different state
-    curand_init(seed, idx, 0, &states[idx]);
-}
-
-__global__ void do_MonteCarlo_simulation(curandState *states, float *counts, int n)
-{
-    int tid = blockDim.x * blockIdx.x + threadIdx.x;
-
-    // Check if the thread ID is within bounds
-    if (tid >= n)
-        return;
-
-    // Initialize the count to 0
-    counts[tid] = 0;
-
-    // Get the state for this thread
-    curandState localState = states[tid];
-
-    // Generate a random float between -1.0 and 1.0
-    float x = 2.0f * curand_uniform(&localState) - 1.0f;
-    float y = 2.0f * curand_uniform(&localState) - 1.0f;
-    float z = 2.0f * curand_uniform(&localState) - 1.0f;
-
-    // Check if the generated point is inside the unit sphere
-    if (x * x + y * y + z * z <= 1.0f)
-        counts[tid] = 1;
-
-    // Save the state back: unnecessary unless this kernel is called again
-    states[tid] = localState;
-}
-
-__global__ void reduce1(float *x, int N)
-{
-    int tid = blockDim.x * blockIdx.x + threadIdx.x;
-    float tsum = 0.0f;
-    int stride = gridDim.x * blockDim.x;
-    for (int k = tid; k < N; k += stride)
-    {
-        tsum += x[k];
-    }
-    x[tid] = tsum;
-}
+__global__ void init_curand_states(curandState *states, unsigned long seed);
+__global__ void do_MonteCarlo_simulation(curandState *states, float *counts, int n);
+__global__ void reduce1(float *x, int n);
 
 int main()
 {
@@ -109,54 +68,120 @@ float HW1_SPHERE_host(int n)
 float HW1_SPHERE_reduce1(int n)
 {
     int threads = 256;
-    int blocks = n / threads; // assume N is a multiple of thread block size.
+    int blocks = ceil_div(n, threads); // assume N is a multiple of thread block size.
 
+    // Initialize CURAND states
     curandState *d_states;
     cudaMalloc(&d_states, n * sizeof(curandState));
 
     init_curand_states<<<blocks, threads>>>(d_states, time(NULL));
     cudaDeviceSynchronize();
 
+    // Execute Monte Carlo simulation kernel
     float *d_counts;
     cudaMalloc(&d_counts, n * sizeof(double));
 
     do_MonteCarlo_simulation<<<blocks, threads, threads * sizeof(float)>>>(d_states, d_counts, n);
     cudaDeviceSynchronize();
 
-    // free(counts);
-
-    // do reduction here
+    // Reduce the simulation results
     reduce1<<<blocks, threads>>>(d_counts, n);
     reduce1<<<1, threads>>>(d_counts, blocks * threads);
     reduce1<<<1, 1>>>(d_counts, threads);
 
-    float sum;
-    cudaMemcpy(&sum, d_counts, sizeof(float), cudaMemcpyDeviceToHost);
+    // Copy final result back to host
+    float total_count;
+    cudaMemcpy(&total_count, d_counts, sizeof(float), cudaMemcpyDeviceToHost);
 
-    // Return the volume of the sphere
-    return 8.0 * sum / n; // The volume of the unit cube is 8
+    // Free allocated device memory
+    cudaFree(d_states);
+    cudaFree(d_counts);
+
+    // Return the volume of the sphere if (tid >= N)
+    return 8.0 * total_count / n; // The volume of the unit cube is 8
 }
 
 float HW1_SPHERE_thrust(int n)
 {
     int threads = 256;
-    int blocks = n / threads; // assume N is a multiple of thread block size.
+    int blocks = ceil_div(n, threads); // assume N is a multiple of thread block size.
 
+    // Initialize CURAND states
     curandState *d_states;
     cudaMalloc(&d_states, n * sizeof(curandState));
 
     init_curand_states<<<blocks, threads>>>(d_states, time(NULL));
     cudaDeviceSynchronize();
 
+    // Execute Monte Carlo simulation kernel
     float *d_counts;
     cudaMalloc(&d_counts, n * sizeof(double));
 
     do_MonteCarlo_simulation<<<blocks, threads, threads * sizeof(float)>>>(d_states, d_counts, n);
     cudaDeviceSynchronize();
 
+    // Reduce the simulation results
     thrust::device_vector<float> d_vec_counts(d_counts, d_counts + n);
-    float sum = thrust::reduce(d_vec_counts.begin(), d_vec_counts.end());
+    float total_count = thrust::reduce(d_vec_counts.begin(), d_vec_counts.end());
+
+    // Free allocated device memory
+    cudaFree(d_states);
+    cudaFree(d_counts);
 
     // Return the volume of the sphere
-    return 8.0 * sum / n; // The volume of the unit cube is 8
+    return 8.0 * total_count / n; // The volume of the unit cube is 8
+}
+
+__global__ void init_curand_states(curandState *states, unsigned long seed)
+{
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    // each thread gets a different state
+    curand_init(seed, idx, 0, &states[idx]);
+}
+
+__global__ void do_MonteCarlo_simulation(curandState *states, float *counts, int n)
+{
+    int tid = blockDim.x * blockIdx.x + threadIdx.x;
+
+    // Check if the thread ID is within bounds
+    if (tid >= n)
+        return;
+
+    // Initialize the count to 0
+    counts[tid] = 0;
+
+    // Get the state for this thread
+    curandState localState = states[tid];
+
+    // Generate a random float between -1.0 and 1.0
+    float x = 2.0f * curand_uniform(&localState) - 1.0f;
+    float y = 2.0f * curand_uniform(&localState) - 1.0f;
+    float z = 2.0f * curand_uniform(&localState) - 1.0f;
+
+    // Check if the generated point is inside the unit sphere
+    if (x * x + y * y + z * z <= 1.0f)
+        counts[tid] = 1;
+
+    // Save the state back: unnecessary unless this kernel is called again
+    states[tid] = localState;
+}
+
+__global__ void reduce1(float *x, int n)
+{
+    int tid = blockDim.x * blockIdx.x + threadIdx.x;
+
+    // Check if the thread ID is within bounds
+    if (tid >= n)
+        return;
+
+    // Perform a summation
+    float tsum = 0.0f;
+    int stride = gridDim.x * blockDim.x;
+    for (int k = tid; k < n; k += stride)
+    {
+        tsum += x[k];
+    }
+
+    // Store the partial sum in the corresponding position of x
+    x[tid] = tsum;
 }
