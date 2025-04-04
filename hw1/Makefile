@@ -1,0 +1,13 @@
+CC=nvcc
+SRC=HW_1.cu
+TARGET=hw1
+FLAGS=-lcublas -arch=sm_86 -Xcompiler -fopenmp
+
+all : $(TARGET)
+
+$(TARGET) : $(SRC)
+	$(CC) $(SRC) -o $(TARGET) $(FLAGS)
+
+.PHONY : clean
+clean :
+	rm $(TARGET)
