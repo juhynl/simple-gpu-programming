@@ -1,6 +1,6 @@
 CC=nvcc
 SRC=HW_1.cu
-TARGET=hw1
+TARGET=my_program
 FLAGS=-lcublas -arch=sm_86 -Xcompiler -fopenmp
 
 all : $(TARGET)
