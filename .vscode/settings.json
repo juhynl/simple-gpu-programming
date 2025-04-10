@@ -1,0 +1,20 @@
+{
+  "[cpp]": {
+    "editor.defaultFormatter": "xaver.clang-format"
+  },
+  "clang-format.executable": "clang-format", // clang-format 실행 파일 경로 (환경에 맞게 설정)
+  "clang-format.style": "file", // .clang-format 파일을 기준으로 스타일 적용
+  "editor.formatOnSave": true,
+  "files.associations": {
+    "cmath": "cpp",
+    "bitset": "cpp",
+    "chrono": "cpp",
+    "algorithm": "cpp",
+    "__bit_reference": "cpp",
+    "map": "cpp",
+    "set": "cpp",
+    "unordered_map": "cpp",
+    "random": "cpp",
+    "*.tcc": "cpp"
+  } // 저장 시 자동 포맷
+}
