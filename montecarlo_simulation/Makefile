@@ -1,5 +1,5 @@
 CC=nvcc
-SRC=HW_1.cu
+SRC=montecarlo_simulation.cu
 TARGET=my_program
 FLAGS=-lcublas -arch=sm_86 -Xcompiler -fopenmp
 
