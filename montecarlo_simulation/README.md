@@ -1,6 +1,6 @@
 # Montecarlo Simulation with CUDA
 Let's simulate the volume of a sphere with a radius of 1 (which is $\frac{4}{3}\pi$) by generating uniform random numbers on a GPU.
-- Generate $n$ points within the space $ [-1.0, 1.0] \times [-1.0, 1.0] \times [-1.0, 1.0] $ for sufficiently large $n$.
+- Generate $n$ points within the space $[-1.0, 1.0] \times [-1.0, 1.0] \times [-1.0, 1.0]$ for sufficiently large $n$.
 - Count the number of points that fall inside the sphere and estimate the sphere's volume.
 
 ## Methods
