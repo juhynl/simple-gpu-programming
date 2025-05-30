@@ -19,6 +19,8 @@
 
 #define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
 
+#define NUM_REPEATS 100
+
 using namespace nvcuda;
 
 // File read/write functions
@@ -47,8 +49,17 @@ void MM_DEVICE_SM(const float *A, const float *B, float *C, const int M, const i
 void MM_DEVICE_SM_MWPT(const float *A, const float *B, float *C, const int M, const int N, const int K);
 void MM_DEVICE_TC_GM(__half *A, __half *B, float *C, const int M, const int N, const int K);
 void MM_DEVICE_TC_SM(__half *A, __half *B, float *C, const int M, const int N, const int K);
-void MM_DEVICE_CUBLAS_CC(cublasHandle_t handle, const float *A, const float *B, float *C, const int M, const int N, const int K);
-void MM_DEVICE_CUBLAS_TC(cublasHandle_t handle, const __half *A, const __half *B, float *C, const int M, const int N, const int K);
+void MM_DEVICE_CUBLAS_CC(const float *A, const float *B, float *C, const int M, const int N, const int K);
+void MM_DEVICE_CUBLAS_TC(const __half *A, const __half *B, float *C, const int M, const int N, const int K);
+void MM_HOST_DOUBLE(const float *A, const float *B, float *C, const int M, const int N, const int K);
+double compute_avg_relative_err(const float *A, const float *B, int M, int N);
+double find_max_relative_err(const float *A, const float *B, int M, int N);
+
+// Function pointer type for matrix multiplication device functions
+typedef void (*MM_DEVICE_FUNC)(const void *, const void *, float *, int, int, int);
+
+// Handle for cuBLAS
+cublasHandle_t handle_global;
 
 int main(void)
 {
@@ -56,13 +67,16 @@ int main(void)
     __half *A_hf, *B_hf;
     int m, n, k;
 
+    // Read input matrices from binary files
     fread_matrix(FILE_A, &A, &m, &k);
     fread_matrix(FILE_B, &B, &k, &n);
     fread_matrix(FILE_A_HF, &A_hf, &m, &k);
     fread_matrix(FILE_B_HF, &B_hf, &k, &n);
     C = (float *)malloc(m * n * sizeof(float));
 
-    // FP32 matrices
+    printf("\nM: %d, N: %d, K: %d\n\n", m, n, k);
+
+    // Copy FP32 matrices to device memory
     float *d_A, *d_B, *d_C;
     cudaMalloc(&d_A, m * k * sizeof(float));
     cudaMalloc(&d_B, k * n * sizeof(float));
@@ -72,7 +86,7 @@ int main(void)
     cudaMemcpy(d_B, B, k * n * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemset(d_C, 0, m * n * sizeof(float));
 
-    // Half matrices
+    // Copy __half matrices to device memory
     __half *d_A_hf, *d_B_hf;
 
     cudaMalloc(&d_A_hf, m * k * sizeof(__half));
@@ -81,62 +95,111 @@ int main(void)
     cudaMemcpy(d_A_hf, A_hf, m * k * sizeof(__half), cudaMemcpyHostToDevice);
     cudaMemcpy(d_B_hf, B_hf, k * n * sizeof(__half), cudaMemcpyHostToDevice);
 
-    // Evaluation
-    // Func1
-    cudaMemset(d_C, 0, m * n * sizeof(float));
-    MM_DEVICE_GM(d_A, d_B, d_C, m, n, k);
-    cudaDeviceSynchronize();
-    cudaMemcpy(C, d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost);
-    fwrite_matrix(FILE_C_1, C, m, n);
+    // Function pointers to the corresponding matrix multiplication implementations
+    MM_DEVICE_FUNC funcs[] = {
+        (MM_DEVICE_FUNC)MM_DEVICE_GM,
+        (MM_DEVICE_FUNC)MM_DEVICE_SM,
+        (MM_DEVICE_FUNC)MM_DEVICE_SM_MWPT,
+        (MM_DEVICE_FUNC)MM_DEVICE_TC_GM,
+        (MM_DEVICE_FUNC)MM_DEVICE_TC_SM,
+        (MM_DEVICE_FUNC)MM_DEVICE_CUBLAS_CC,
+        (MM_DEVICE_FUNC)MM_DEVICE_CUBLAS_TC,
+    };
 
-    // Func2
-    cudaMemset(d_C, 0, m * n * sizeof(float));
-    MM_DEVICE_SM(d_A, d_B, d_C, m, n, k);
-    cudaDeviceSynchronize();
-    cudaMemcpy(C, d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost);
-    fwrite_matrix(FILE_C_2, C, m, n);
+    // Label each functions
+    const char *func_types[] = {
+        "CUDA Cores/float",
+        "CUDA Cores/float/shared memory",
+        "CUDA Cores/float/shared memory/MWPT",
+        "Tensor Cores/half",
+        "Tensor Cores/half/shared memory",
+        "CUDA Cores/float/cuBLAS",
+        "Tensor Cores/half/cuBLAS",
+    };
 
-    // Func3
-    cudaMemset(d_C, 0, m * n * sizeof(float));
-    MM_DEVICE_SM_MWPT(d_A, d_B, d_C, m, n, k);
-    cudaDeviceSynchronize();
-    cudaMemcpy(C, d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost);
-    fwrite_matrix(FILE_C_3, C, m, n);
+    // Output file names for saving result matrices corresponding to each method
+    const char *output_files[] = {
+        FILE_C_1, FILE_C_2, FILE_C_3, FILE_C_4, FILE_C_5, FILE_C_6, FILE_C_7};
 
-    // Func4
-    cudaMemset(d_C, 0, m * n * sizeof(float));
-    MM_DEVICE_TC_GM(d_A_hf, d_B_hf, d_C, m, n, k);
-    cudaDeviceSynchronize();
-    cudaMemcpy(C, d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost);
-    fwrite_matrix(FILE_C_4, C, m, n);
+    // Device pointers to input matrices A and B
+    const void *d_A_list[] = {d_A, d_A, d_A, d_A_hf, d_A_hf, d_A, d_A_hf};
+    const void *d_B_list[] = {d_B, d_B, d_B, d_B_hf, d_B_hf, d_B, d_B_hf};
 
-    // Func5
-    cudaMemset(d_C, 0, m * n * sizeof(float));
-    MM_DEVICE_TC_SM(d_A_hf, d_B_hf, d_C, m, n, k);
-    cudaDeviceSynchronize();
-    cudaMemcpy(C, d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost);
-    fwrite_matrix(FILE_C_5, C, m, n);
+    cublasCreate_v2(&handle_global);
 
-    // cuBLAS
-    cublasHandle_t handle;
-    cublasCreate_v2(&handle);
+    double total_time_ms[7] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    // Test seven matrix multiplication functions
+    for (int i = 0; i < 7; i++)
+    {
+        // Initialize output matrix C to zero on device memory
+        cudaMemset(d_C, 0, m * n * sizeof(float));
 
-    // Func6
-    cudaMemset(d_C, 0, m * n * sizeof(float));
-    MM_DEVICE_CUBLAS_CC(handle, d_A, d_B, d_C, m, n, k);
-    cudaMemcpy(C, d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost);
-    fwrite_matrix(FILE_C_6, C, m, n);
+        // Warm-up
+        for (int iter = 0; iter < 10; iter++)
+        {
+            funcs[i](d_A_list[i], d_B_list[i], d_C, m, n, k);
+        }
 
-    // Func7
-    cudaMemset(d_C, 0, m * n * sizeof(float));
-    MM_DEVICE_CUBLAS_TC(handle, d_A_hf, d_B_hf, d_C, m, n, k);
-    cudaMemcpy(C, d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost);
-    fwrite_matrix(FILE_C_7, C, m, n);
+        // Repeat NUM_REPEATS times to measure average execution time
+        for (int iter = 0; iter < NUM_REPEATS; iter++)
+        {
+            CHECK_TIME_START(_start);
+            funcs[i](d_A_list[i], d_B_list[i], d_C, m, n, k);
+            CHECK_TIME_END(_start, _end, _compute_time);
+            total_time_ms[i] += _compute_time;
+        }
 
-    cublasDestroy_v2(handle);
+        // Copy result matrix from device to host and save it to a file
+        cudaMemcpy(C, d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost);
+        fwrite_matrix(output_files[i], C, m, n);
+    }
+
+    // Run host-side matrix multiplication using double precision for reference
+    MM_HOST_DOUBLE(A, B, C, m, n, k);
+
+    for (int i = 0; i < 7; i++)
+    {
+        float *C_result;
+        int m_result, n_result;
+
+        // Compute average execution time over NUM_REPEATS
+        double avg_time = total_time_ms[i] / NUM_REPEATS;
+
+        // Read result matrix generated by the i-th GPU method from file
+        fread_matrix(output_files[i], &C_result, &m_result, &n_result);
+
+        // Compute average and maximum absolute relative errors between GPU and CPU results
+        double relative_err = compute_avg_relative_err(C, C_result, m_result, n_result);
+        double max_err = find_max_relative_err(C, C_result, m_result, n_result);
+
+        // Print results
+        printf("[%d] GPU time(%s) = %e(ms)\n\n", i + 1, func_types[i], avg_time);
+        printf("\t[Absolute relative errors] average = %e, max = %e\n\n", relative_err, max_err);
+
+        free(C_result);
+    }
+
+    // Destory cuBLAS handle
+    cublasDestroy_v2(handle_global);
+
+    // Free allocated memory
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
+    cudaFree(d_A_hf);
+    cudaFree(d_B_hf);
+
+    free(A);
+    free(B);
+    free(A_hf);
+    free(B_hf);
+
     return 0;
 }
 
+// ================================================================================================================
+// File read/write functions
+// ================================================================================================================
 void fread_matrix(const char *filename, float **matrix, int *row, int *col)
 {
     FILE *fp = fopen(filename, "rb");
@@ -191,7 +254,7 @@ void fwrite_matrix(const char *filename, float *matrix, int row, int col)
 }
 
 // ================================================================================================================
-// Kernels
+// Matrix multiplication kernels
 // ================================================================================================================
 __global__ void mm_naive_cc(const float *A, const float *B, float *C, const int M, const int N, const int K)
 {
@@ -379,7 +442,7 @@ __global__ void mm_sm_tc(__half *A, __half *B, float *C, const int M, const int 
 }
 
 // ================================================================================================================
-// Functions
+// Host Functions
 // ================================================================================================================
 void MM_DEVICE_GM(const float *A, const float *B, float *C, const int M, const int N, const int K)
 {
@@ -388,6 +451,7 @@ void MM_DEVICE_GM(const float *A, const float *B, float *C, const int M, const i
     dim3 blockDim(256);
     dim3 gridDim(CEIL_DIV(size_C, blockDim.x));
     mm_naive_cc<<<gridDim, blockDim>>>(A, B, C, M, N, K);
+    cudaDeviceSynchronize();
 }
 
 void MM_DEVICE_SM(const float *A, const float *B, float *C, const int M, const int N, const int K)
@@ -396,6 +460,7 @@ void MM_DEVICE_SM(const float *A, const float *B, float *C, const int M, const i
     dim3 blockDim(TS * TS);
     dim3 gridDim(CEIL_DIV(M, TS) * CEIL_DIV(N, TS));
     mm_sm_cc<TS><<<gridDim, blockDim>>>(A, B, C, M, N, K);
+    cudaDeviceSynchronize();
 }
 
 void MM_DEVICE_SM_MWPT(const float *A, const float *B, float *C, const int M, const int N, const int K)
@@ -406,6 +471,7 @@ void MM_DEVICE_SM_MWPT(const float *A, const float *B, float *C, const int M, co
     dim3 blockDim(TS * RTS);
     dim3 gridDim(CEIL_DIV(M, TS) * CEIL_DIV(N, TS));
     mm_sm_mwpt_cc<TS, WPT, RTS><<<gridDim, blockDim>>>(A, B, C, M, N, K);
+    cudaDeviceSynchronize();
 }
 
 void MM_DEVICE_TC_GM(__half *A, __half *B, float *C, const int M, const int N, const int K)
@@ -417,6 +483,7 @@ void MM_DEVICE_TC_GM(__half *A, __half *B, float *C, const int M, const int N, c
     int warp_per_block = blockDim.x / 32;
     dim3 gridDim(CEIL_DIV(CEIL_DIV(M, WMMA_M) * CEIL_DIV(N, WMMA_N), warp_per_block));
     mm_naive_tc<WMMA_M, WMMA_N, WMMA_K><<<gridDim, blockDim>>>(A, B, C, M, N, K);
+    cudaDeviceSynchronize();
 }
 
 void MM_DEVICE_TC_SM(__half *A, __half *B, float *C, const int M, const int N, const int K)
@@ -431,20 +498,64 @@ void MM_DEVICE_TC_SM(__half *A, __half *B, float *C, const int M, const int N, c
     dim3 blockDim((TILE_M / WMMA_M * TILE_N / WMMA_N) * 32);
     dim3 gridDim(CEIL_DIV(M, TILE_M) * CEIL_DIV(N, TILE_N));
 
-    printf("%d %d %d\n", M, N, K);
-
     mm_sm_tc<TILE_M, TILE_N, TILE_K, WMMA_M, WMMA_N, WMMA_K><<<gridDim, blockDim, shm_size>>>(A, B, C, M, N, K);
+    cudaDeviceSynchronize();
 }
 
-void MM_DEVICE_CUBLAS_CC(cublasHandle_t handle, const float *A, const float *B, float *C, const int M, const int N, const int K)
+void MM_DEVICE_CUBLAS_CC(const float *A, const float *B, float *C, const int M, const int N, const int K)
 {
     float alpha = 1.0, beta = 0.0;
 
-    cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, CUDA_R_32F, N, A, CUDA_R_32F, K, &beta, C, CUDA_R_32F, N, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+    cublasGemmEx(handle_global, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, CUDA_R_32F, N, A, CUDA_R_32F, K, &beta, C, CUDA_R_32F, N, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
 }
 
-void MM_DEVICE_CUBLAS_TC(cublasHandle_t handle, const __half *A, const __half *B, float *C, const int M, const int N, const int K)
+void MM_DEVICE_CUBLAS_TC(const __half *A, const __half *B, float *C, const int M, const int N, const int K)
 {
     float alpha = 1.0, beta = 0.0;
-    cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, CUDA_R_16F, N, A, CUDA_R_16F, K, &beta, C, CUDA_R_32F, N, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+    cublasGemmEx(handle_global, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, CUDA_R_16F, N, A, CUDA_R_16F, K, &beta, C, CUDA_R_32F, N, CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
+}
+
+void MM_HOST_DOUBLE(const float *A, const float *B, float *C, const int M, const int N, const int K)
+{
+    for (int m = 0; m < M; m++)
+    {
+        for (int n = 0; n < N; n++)
+        {
+            double accum = 0.0;
+            for (int k = 0; k < K; k++)
+            {
+                accum += A[m * K + k] * B[k * N + n];
+            }
+            C[m * N + n] = (float)accum;
+        }
+    }
+}
+
+double compute_avg_relative_err(const float *A, const float *B, int M, int N)
+{
+    double error = 0.0f;
+
+    for (int i = 0; i < M * N; ++i)
+    {
+        double diff = abs(A[i] - B[i]) / A[i];
+        error += diff;
+    }
+
+    return error / (M * N);
+}
+
+double find_max_relative_err(const float *A, const float *B, int M, int N)
+{
+    double max_err = 0.0f;
+
+    for (int i = 0; i < M * N; ++i)
+    {
+        double diff = abs(A[i] - B[i]) / A[i];
+        if (diff > max_err)
+        {
+            max_err = diff;
+        }
+    }
+
+    return max_err;
 }
