@@ -537,7 +537,7 @@ double compute_avg_relative_err(const float *A, const float *B, int M, int N)
 
     for (int i = 0; i < M * N; ++i)
     {
-        double diff = abs(A[i] - B[i]) / A[i];
+        double diff = fabs(A[i] - B[i] / A[i]);
         error += diff;
     }
 
@@ -550,7 +550,7 @@ double find_max_relative_err(const float *A, const float *B, int M, int N)
 
     for (int i = 0; i < M * N; ++i)
     {
-        double diff = abs(A[i] - B[i]) / A[i];
+        double diff = fabs(A[i] - B[i] / A[i]);
         if (diff > max_err)
         {
             max_err = diff;
