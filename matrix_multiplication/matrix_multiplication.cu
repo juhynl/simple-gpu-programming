@@ -21,10 +21,12 @@
 
 using namespace nvcuda;
 
+// File read/write functions
 void fread_matrix(const char *filename, float **matrix, int *row, int *col);
 void fread_matrix(const char *filename, __half **matrix, int *row, int *col);
 void fwrite_matrix(const char *filename, float *matrix, int row, int col);
 
+// Matrix multiplication kernels
 __global__ void mm_naive_cc(const float *A, const float *B, float *C, const int M, const int N, const int K);
 
 template <const uint TS>
@@ -39,6 +41,7 @@ __global__ void mm_naive_tc(__half *A, __half *B, float *C, const int M, const i
 template <const uint TILE_M, const uint TILE_N, const uint TILE_K, const uint WMMA_M, const uint WMMA_N, const uint WMMA_K>
 __global__ void mm_sm_tc(__half *A, __half *B, float *C, const int M, const int N, const int K);
 
+// Host functions
 void MM_DEVICE_GM(const float *A, const float *B, float *C, const int M, const int N, const int K);
 void MM_DEVICE_SM(const float *A, const float *B, float *C, const int M, const int N, const int K);
 void MM_DEVICE_SM_MWPT(const float *A, const float *B, float *C, const int M, const int N, const int K);
@@ -80,50 +83,52 @@ int main(void)
 
     // Evaluation
     // Func1
+    cudaMemset(d_C, 0, m * n * sizeof(float));
     MM_DEVICE_GM(d_A, d_B, d_C, m, n, k);
     cudaDeviceSynchronize();
     cudaMemcpy(C, d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost);
     fwrite_matrix(FILE_C_1, C, m, n);
-    cudaMemset(d_C, 0, m * n * sizeof(float));
 
     // Func2
+    cudaMemset(d_C, 0, m * n * sizeof(float));
     MM_DEVICE_SM(d_A, d_B, d_C, m, n, k);
     cudaDeviceSynchronize();
     cudaMemcpy(C, d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost);
     fwrite_matrix(FILE_C_2, C, m, n);
-    cudaMemset(d_C, 0, m * n * sizeof(float));
 
     // Func3
+    cudaMemset(d_C, 0, m * n * sizeof(float));
     MM_DEVICE_SM_MWPT(d_A, d_B, d_C, m, n, k);
     cudaDeviceSynchronize();
     cudaMemcpy(C, d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost);
     fwrite_matrix(FILE_C_3, C, m, n);
-    cudaMemset(d_C, 0, m * n * sizeof(float));
 
     // Func4
+    cudaMemset(d_C, 0, m * n * sizeof(float));
     MM_DEVICE_TC_GM(d_A_hf, d_B_hf, d_C, m, n, k);
     cudaDeviceSynchronize();
     cudaMemcpy(C, d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost);
     fwrite_matrix(FILE_C_4, C, m, n);
-    cudaMemset(d_C, 0, m * n * sizeof(float));
 
     // Func5
+    cudaMemset(d_C, 0, m * n * sizeof(float));
     MM_DEVICE_TC_SM(d_A_hf, d_B_hf, d_C, m, n, k);
     cudaDeviceSynchronize();
     cudaMemcpy(C, d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost);
     fwrite_matrix(FILE_C_5, C, m, n);
-    cudaMemset(d_C, 0, m * n * sizeof(float));
 
     // cuBLAS
     cublasHandle_t handle;
     cublasCreate_v2(&handle);
 
     // Func6
+    cudaMemset(d_C, 0, m * n * sizeof(float));
     MM_DEVICE_CUBLAS_CC(handle, d_A, d_B, d_C, m, n, k);
     cudaMemcpy(C, d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost);
     fwrite_matrix(FILE_C_6, C, m, n);
 
     // Func7
+    cudaMemset(d_C, 0, m * n * sizeof(float));
     MM_DEVICE_CUBLAS_TC(handle, d_A_hf, d_B_hf, d_C, m, n, k);
     cudaMemcpy(C, d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost);
     fwrite_matrix(FILE_C_7, C, m, n);
@@ -194,7 +199,7 @@ __global__ void mm_naive_cc(const float *A, const float *B, float *C, const int 
     int t_m = tid / N;
     int t_n = tid % N;
 
-    if (t_m >= M && t_n >= N)
+    if (t_m >= M || t_n >= N)
         return;
 
     float accum = 0.0f;
@@ -226,14 +231,14 @@ __global__ void mm_sm_cc(const float *A, const float *B, float *C, const int M, 
 
     float accum = 0.0f;
     int A_row_idx = global_row;
-    int B_col_idx = tile_col * TS + local_row;
+    int B_col_idx = global_col;
     for (int k = 0; k < K; k += TS)
     {
         int A_col_idx = k + local_col;
-        int B_row_idx = k + local_col;
+        int B_row_idx = k + local_row;
 
         tile_A[tid] = (A_col_idx < K) ? A[A_row_idx * K + A_col_idx] : 0.0f;
-        tile_B[tid] = (B_row_idx < K) ? B[B_row_idx * N + B_col_idx] : 0.0f;
+        tile_B[local_col * TS + local_row] = (B_row_idx < K) ? B[B_row_idx * N + B_col_idx] : 0.0f;
 
         __syncthreads();
 
@@ -241,6 +246,7 @@ __global__ void mm_sm_cc(const float *A, const float *B, float *C, const int M, 
         {
             accum += tile_A[local_row * TS + i] * tile_B[local_col * TS + i];
         }
+        __syncthreads();
     }
     C[global_row * N + global_col] = accum;
 }
