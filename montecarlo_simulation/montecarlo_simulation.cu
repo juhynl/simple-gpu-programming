@@ -12,7 +12,7 @@
 // ===============================================================================================
 // Experiment configurations
 // ===============================================================================================
-#define NUM_ITER_FOR_TEST 100
+#define NUM_ITER_FOR_TEST 20
 #define N (1 << 24) // Number of points
 #define BLOCK_SIZE 256
 // ===============================================================================================
@@ -20,7 +20,7 @@
 // ===============================================================================================
 // CUDA kernels
 // ===============================================================================================
-__global__ void init_curand_states(curandState* states, int n, unsigned long seed)
+__global__ void init_curand_states(curandState *states, int n, unsigned long seed)
 {
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -31,7 +31,7 @@ __global__ void init_curand_states(curandState* states, int n, unsigned long see
     curand_init(seed, tid, 0, &states[tid]);
 }
 
-__global__ void do_MonteCarlo_simulation(curandState* states, float* counts, int n)
+__global__ void do_MonteCarlo_simulation(curandState *states, float *counts, int n)
 {
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -58,7 +58,7 @@ __global__ void do_MonteCarlo_simulation(curandState* states, float* counts, int
     states[tid] = localState;
 }
 
-__global__ void reduce1(float* x, int n)
+__global__ void reduce1(float *x, int n)
 {
     int tid = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -102,23 +102,23 @@ double HW1_SPHERE_host(int n)
     return 8.0 * sum / n; // The volume of the unit cube is 8
 }
 
-double HW1_SPHERE_reduce1(int n, curandState* d_states)
+double HW1_SPHERE_reduce1(int n, curandState *d_states)
 {
     int threads = BLOCK_SIZE;
     int blocks = CEIL_DIV(n, threads);
     int blocks_reduce1 = n / threads;
 
     // Execute Monte Carlo simulation kernel
-    float* d_counts;
+    float *d_counts;
     cudaMalloc(&d_counts, n * sizeof(double));
 
-    do_MonteCarlo_simulation << <blocks, threads, threads * sizeof(float) >> > (d_states, d_counts, n);
+    do_MonteCarlo_simulation<<<blocks, threads, threads * sizeof(float)>>>(d_states, d_counts, n);
 
     // Reduce the simulation results
-    //int blocks = n / threads;
-    reduce1 << <blocks_reduce1, threads >> > (d_counts, n);
-    reduce1 << <1, threads >> > (d_counts, blocks_reduce1 * threads);
-    reduce1 << <1, 1 >> > (d_counts, threads);
+    // int blocks = n / threads;
+    reduce1<<<blocks_reduce1, threads>>>(d_counts, n);
+    reduce1<<<1, threads>>>(d_counts, blocks_reduce1 * threads);
+    reduce1<<<1, 1>>>(d_counts, threads);
     cudaDeviceSynchronize();
 
     // Copy final result back to host
@@ -138,10 +138,10 @@ double HW1_SPHERE_thrust(int n, curandState *d_states)
     int blocks = CEIL_DIV(n, threads);
 
     // Execute Monte Carlo simulation kernel
-    float* d_counts;
+    float *d_counts;
     cudaMalloc(&d_counts, n * sizeof(double));
 
-    do_MonteCarlo_simulation << <blocks, threads, threads * sizeof(float) >> > (d_states, d_counts, n);
+    do_MonteCarlo_simulation<<<blocks, threads, threads * sizeof(float)>>>(d_states, d_counts, n);
 
     // Reduce the simulation results
     thrust::device_vector<float> d_vec_counts(d_counts, d_counts + n);
@@ -154,7 +154,8 @@ double HW1_SPHERE_thrust(int n, curandState *d_states)
     return 8.0 * sum / n; // The volume of the unit cube is 8
 }
 
-void print_result(double unit_sphere_volume_exact, double unit_sphere_volume_simulated, float time) {
+void print_result(double unit_sphere_volume_exact, double unit_sphere_volume_simulated, float time)
+{
     fprintf(stdout, "simulated = %.15f / ", unit_sphere_volume_simulated);
     fprintf(stdout, "exact = %.15f / ", unit_sphere_volume_exact);
     fprintf(stdout, "relative error = %.15f\n", fabs(unit_sphere_volume_simulated - unit_sphere_volume_exact) / unit_sphere_volume_exact);
@@ -175,10 +176,10 @@ int main()
     int threads = BLOCK_SIZE;
     int blocks = CEIL_DIV(N, threads);
 
-    curandState* d_states;
+    curandState *d_states;
     cudaMalloc(&d_states, N * sizeof(curandState));
 
-    init_curand_states << <blocks, threads >> > (d_states, N, seed);
+    init_curand_states<<<blocks, threads>>>(d_states, N, seed);
     cudaDeviceSynchronize();
 
     // ===============================================================================================
@@ -246,9 +247,10 @@ int main()
     // ===============================================================================================
     srand(0);
 
-    float* rand_array = (float*)malloc(N * sizeof(float));
+    float *rand_array = (float *)malloc(N * sizeof(float));
 
-    for (int i = 0; i < N; i++) {
+    for (int i = 0; i < N; i++)
+    {
         rand_array[i] = RAND_UNIFORM;
     }
 
@@ -265,14 +267,14 @@ int main()
     }
 
     // reduce1
-    float* d_rand_array;
+    float *d_rand_array;
     cudaMalloc(&d_rand_array, N * sizeof(float));
     cudaMemcpy(d_rand_array, rand_array, N * sizeof(float), cudaMemcpyHostToDevice);
 
     int blocks_reduce1 = N / threads;
-    reduce1 << <blocks_reduce1, threads >> > (d_rand_array, N);
-    reduce1 << <1, threads >> > (d_rand_array, blocks_reduce1 * threads);
-    reduce1 << <1, 1 >> > (d_rand_array, threads);
+    reduce1<<<blocks_reduce1, threads>>>(d_rand_array, N);
+    reduce1<<<1, threads>>>(d_rand_array, blocks_reduce1 * threads);
+    reduce1<<<1, 1>>>(d_rand_array, threads);
     cudaDeviceSynchronize();
 
     float sum_reduce1;
@@ -284,7 +286,6 @@ int main()
     float sum_thrust = thrust::reduce(d_vec_counts.begin(), d_vec_counts.end());
 
     cudaFree(d_rand_array);
-
 
     fprintf(stdout, "\nValidate reduction methods\n");
     fprintf(stdout, "Host(float): %.15f\n", sum_host);

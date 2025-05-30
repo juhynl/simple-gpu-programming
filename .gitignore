@@ -6,4 +6,6 @@
 *.fatbin
 
 # Executable file
-my_program
+mc_sim
+matmul
+matgen

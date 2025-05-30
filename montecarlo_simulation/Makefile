@@ -1,6 +1,6 @@
 CC=nvcc
 SRC=montecarlo_simulation.cu
-TARGET=my_program
+TARGET=mc_sim
 FLAGS=-lcublas -arch=sm_86 -Xcompiler -fopenmp
 
 all : $(TARGET)
