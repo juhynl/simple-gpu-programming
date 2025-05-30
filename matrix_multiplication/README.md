@@ -43,7 +43,12 @@ make
 ```bash
 ./matgen 1024 1024 2048     # Format: ./randmat m n k
 ```
+![image](https://github.com/user-attachments/assets/221f8b47-7515-4f20-a201-95ed669d182e)
+
 ### 3. Run multiplication and benchmark
 ```bash
 ./matmul
 ```
+![image](https://github.com/user-attachments/assets/0083acea-5334-4cfa-bedf-ad6e7d67d14b)
+![image](https://github.com/user-attachments/assets/006e4905-1307-4932-be34-2e5af05bffd5)
+
