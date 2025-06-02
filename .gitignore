@@ -4,6 +4,9 @@
 *.ptx
 *.cubin
 *.fatbin
+*.bin
 
 # Executable file
-my_program
+mc_sim
+matmul
+matgen

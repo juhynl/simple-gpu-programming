@@ -16,3 +16,12 @@ float HW1_SPHERE_reduce1(int n);
 ```cpp
 float HW1_SPHERE_thrust(int n);
 ```
+
+## Quick Start
+Run the Monte Carlo simulation using the following commands:
+```bash
+make
+./mc_sim
+```
+The program measures the execution time of each function 20 times and reports the average time along with the simulation error.
+![image](https://github.com/user-attachments/assets/140b57bf-d6f6-4c13-b8a7-8c3e92a1454e)
