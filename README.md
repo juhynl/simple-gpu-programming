@@ -1,4 +1,4 @@
-# Introduction to GPU Programming
+# Simple GPU Programming
 This repository contains the assignments for **CSE5483: Introduction to GPU Programming** offered at Sogang University in 2025.
 The course focuses on parallel programming techniques using **CUDA**.
 
